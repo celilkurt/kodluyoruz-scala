@@ -580,3 +580,548 @@ CheesyMeatPide("ground beef", "white cheddar").eat()
 
 VegetarianPide.eat()
 ```
+
+#### 2.6.4. Enumerations and Algebraic Data Types (ADT)
+
+```scala
+// Standard Scala enumeration (not the recommended way)
+// It will contain an inner `Value` type.
+object Color extends Enumeration {
+  // This weird thing generates `Value` instances
+  // for these values during compilation
+  val Red, Green, Blue = Value
+}
+
+println(Color.values)            // Color.ValueSet(Red, Green, Blue)
+println(Color.Blue.id)           // 2
+println(Color.withName("Green")) // Green
+
+object RGB extends Enumeration {
+  // You can extend `Value` to add more fields to each item
+  case class CustomVal(override val id: Int, code: Char) extends Value
+
+  // We instantiate them ourselves in this case.
+  val Red   = CustomVal(0, 'r')
+  val Green = CustomVal(1, 'g')
+  val Blue  = CustomVal(2, 'b')
+  
+  override def values: RGB.ValueSet = RGB.ValueSet(Red, Green, Blue)
+}
+
+println(RGB.Blue.code) // b
+
+def describe(color: RGB.CustomVal): String =
+  color match {
+    case RGB.Red  => "red"
+    case RGB.Blue => "blue"
+  }
+
+// This will fail with `MatchError` in runtime!
+println(describe(RGB.Green))
+```
+
+```scala
+// Sealed means `Color` cannot be extended outside this file.
+// In other words, all possible subtypes of this type is known.
+// It will also help compiler in exhaustivity checks of pattern matches.
+sealed trait Color
+
+object Color {
+  // Regular inheritance, need single instances so they are `object`s
+  // We want to benefit from generated methods so we also use `case`
+  case object Red   extends Color
+  case object Green extends Color
+  case object Blue  extends Color
+
+  // This is optional but it's a good idea to have it avaliable
+  val values: List[Color] = List(Red, Green, Blue)
+}
+
+// Custom type for enum items
+sealed abstract class Auth(val anonymous: Boolean)
+
+object Auth {
+  // Can have multiple instances since it's a regular class
+  case class  UserPass(user: String, pass: String) extends Auth(false)
+  case class  Token(token: String)                 extends Auth(false)
+  case object Guest                                extends Auth(true)
+}
+
+def getSecret(credentials: Auth): Either[String, Int] =
+  credentials match {
+    // Match to a pattern and add conditions if needed
+    case Auth.UserPass("admin", pass) if pass != "@dM1n" =>
+      Left("Incorrect username/password")
+
+    case Auth.Token("1234abc") =>
+      Left("Expired token")
+
+    // Can match against type and give name to value of that type
+    case Auth.Guest =>
+    	Left("Need authorization")
+
+    // Can destruct and match against fields (and ignore some)
+    // Also give a name the matched pattern via `@`
+    // Here `a` is of `Auth.UserPass` type, not just `Auth`
+    case a @ Auth.UserPass(user, _) =>
+      println(s"Accessing secret as $user")
+      Right(42)
+
+    // Can match against type and not care about name of the value
+    case _: Auth.Token =>
+      println(s"Accessing secret as an API with token")
+      Right(42)
+    
+    // If this pattern match did not cover all cases (not exhaustive),
+    // compiler will warn because `Auth` is a sealed type.
+    // In such a case, add `case _ =>` or handle all possible cases.
+  }
+
+// Left(Need authorization)
+println(getSecret(Auth.Guest))
+
+// Left(Expired token)
+println(getSecret(Auth.Token("1234abc")))
+
+// Right(42)
+println(getSecret(Auth.Token("test")))
+
+// Right(Incorrect username/password)
+println(getSecret(Auth.UserPass("admin", "admin")))
+
+// Right(42)
+println(getSecret(Auth.UserPass("admin", "@dM1n")))
+```
+
+## 3. More on Scala
+
+### 3.1. Generics
+
+```scala
+// `I` is called a type parameter of `Model`
+trait Model[I] {
+  val id: I
+}
+
+abstract class Message[M] {
+  val content: M
+}
+
+case class TextMessage(override val id: Int,
+                       override val content: String) extends Message[String]
+                                                        with Model[Int]
+
+case object UnitModel extends Model[Unit] {
+  override val id: Unit = ()
+}
+
+// `M` has a constraint, `M` must be a subtype of `Model[I]`
+// Subtype relation is denoted with `<:`
+// There is also its counterpart supertype constaint `>:`
+def idOf[M <: Model[Int]](model: M): Int = model.id
+
+val message = TextMessage(1, "Hello")
+
+// Method type parameter is inferred from parameter
+// Explicit version: `idOf[TextMessage](message)`
+println(idOf(message)) // 1
+
+// Will not work because `UnitModel` is not a `Model[Int]`
+idOf(UnitModel)
+```
+
+### 3.2. Higher Order Functions, Currying, Partially Applied Functions
+
+```scala
+// Example from: https://docs.scala-lang.org/tour/higher-order-functions.html
+
+// Method returns a function
+def urlBuilder(secure: Boolean, domain: String): (String, String) => String = {
+  val schema = if (secure) "https://" else "http://"
+  
+  // Function to be returned
+  (path: String, query: String) => s"$schema$domain/$path?$query"
+}
+
+// Function literal of type `(String, String) => String`
+// (path: String, query: String) => s"https://google.com/$path?$query"
+val getUrl = urlBuilder(secure = true, "google.com")
+
+// https://google.com/search?q=scala
+val url = getUrl("search", "q=scala")
+```
+
+```scala
+def convert(int: Int): String = int.toString
+
+// Becomes a function literal of type `Int => String` when argument is not given
+// Also called partially applied function
+val converter = convert _
+
+// `fold` has 2 parameter groups, it's also called a curried function
+// Think of each parameter group as the input of next parameter group
+//
+// So type of `fold` is
+// `(List[A], B) => ((B, A) => B) => B`
+//
+// When first parameter group is given it becomes
+// `((B, A) => B) => B`
+//
+// When second parameter group is given it becomes
+// `B`
+def fold[A, B](list: List[A], initial: B)(operation: (B, A) => B): B = {
+  var result: B = initial
+  for (a <- list) {
+    result = operation(result, a)
+  }
+  result
+}
+
+// A function literal
+val appender: (String, Int) => String = (s, i) => s + i.toString
+
+// Second parameter group of `fold` is not given
+// So it becomes a function literal, requiring the value of first parameter group as an input
+val looper: ((String, Int) => String) => String = fold[Int, String]((1 to 5).toList, "")
+
+// Apply the missing parameter (which is another function)
+println(looper(appender)) // "12345"
+
+// Notice second parameter group is written with {} as it is a function
+// Type parameters of `fold` are both inferred to be `Int` here
+//
+// fold((1 to 5).toList, 0)((result, int) => result + int)
+//
+// fold((1 to 5).toList, 0)(_ + _)
+println(
+  fold((1 to 5).toList, 0) { (result, int) =>
+    result + int
+  }
+) // 15
+```
+
+### 3.3. More on Collections
+
+```scala
+val list = (1 to 100 by 2).toList // List(1, 3, 5, ..., 97, 99)
+
+list.head                  // 1
+List.empty[Int].head       // throws exception
+
+list.headOption            // Some(1)
+List.empty[Int].headOption // None
+
+list.last                  // 99
+List.empty[Int].last       // throws exception
+
+list.lastOption            // Some(99)
+List.empty[Int].lastOption // None
+
+list.tail            // List(3, 5, ..., 97, 99)
+List(1).tail         // List()
+List.empty[Int].tail // List()
+
+list.mkString                            // 135...9799
+list.mkString("-")                       // 1-3-5...-97-99
+list.mkString("[", ", ", "]")            // [1, 3, ..., 97, 99]
+List.empty[Int].mkString("[", ", ", "]") // []
+
+list.isEmpty  // false
+list.nonEmpty // true
+
+list.contains(3) // true
+list.contains(4) // false
+
+list.exists(i => i * 2 == 46)            // true
+List.empty[Int].exists(i => i * 2 == 46) // false
+
+list.forall(_ > 0)             // true
+list.forall(_ > 10)            // false
+List.empty[Int].forall(_ > 10) // true
+
+list.find(_ * 2 == 46) // Some(23)
+list.find(_ * 2 == 3)  // None
+
+list.filter(_ > 90) // List(91, 93, 95, 97, 99)
+
+list.filterNot(_ > 10) // List(1, 3, 5, 7, 9)
+
+// On a `List[A]`, `map` takes `A => B` and returns `List[B]`
+val listOfList: List[List[Int]] = list.map(i => List(i - 1, i)) // List(List(0, 1), List(2, 3), ...)
+
+listOfList.flatten // List(0, 1, 2, 3, ..., 99)
+
+// On a `List[A]`, `flatMap` takes `A => List[B]` and returns `List[B]`
+// flatMap = map + flatten
+list.flatMap(i => List(i - 1, i)) // List(0, 1, 2, 3, ..., 99)
+
+// Same as `reduce`
+// On a `List[A]`, `reduce` takes `(A, A) => A` and returns `A`
+list.reduceLeft((i, j) => i + j)  // 2500
+List.empty[Int].reduceLeft(_ + _) // throws an exception
+
+list.reduceLeftOption(_ + _)            // Some(2500)
+List.empty[Int].reduceLeftOption(_ + _) // None
+
+// Same as `fold`
+list.foldLeft("")((acc, i) => acc + i)            // "1357...9799"
+List.empty[Int].foldLeft("")((acc, i) => acc + i) // ""
+
+list.foldRight("")((i, acc) => acc + i)           // "9997...531"
+List.empty[Int].foldLeft("")((acc, i) => acc + i) // ""
+
+// Same as `list.filter(_ > 90).map(_ % 10)`
+list.collect {
+  case i if i > 90 =>
+    i % 10
+}
+// List(1, 3, 5, 7, 9)
+
+// Same as `list.find(_ > 90).map(_ % 10)`
+list.collectFirst {
+  case i if i > 90 =>
+    i % 10
+}
+// Some(1)
+
+list.collectFirst {
+  case i if i > 100 =>
+    i % 10
+}
+// None
+
+list.foreach(i => println(i))
+
+list.drop(3)      // List(7, 9, 11, ..., 97, 99)
+list.dropRight(3) // List(1, 3, 5, ..., 91, 93)
+
+list.take(3)      // List(1, 3, 5)
+list.takeRight(3) // List(95, 97, 99)
+
+list.takeWhile(_ < 10) // List(1, 3, 5, 7)
+
+// On a `List[Int]`, `partition` takes `Int => Boolean` and returns `(List[Int], List[Int])`
+list.partition(_ < 50) // (List(1, 3, ..., 47, 49), List(51, 53, ..., 97, 99))
+
+list.span(_ < 50) // (List(1, 3, 5, 7, 9, 11, ..., 47, 49), List(51, 53, ..., 97, 99))
+
+list.reverse // List(99, 97, ..., 3, 1)
+
+list.slice(3, 5)            // List(7, 9)
+List.empty[Int].slice(3 ,5) // List()
+```
+
+### 3.4. Recursion
+
+To understand recursion, you must first understand recursion.
+
+https://www.google.com/search?q=recursion
+
+```scala
+def fib(n: Int): Int =
+  if (n < 0) {
+    // Base case where recursion needs to stop (no recursive call)
+    0
+  } else if (n == 1) {
+    // Base case where recursion needs to stop (no recursive call)
+    1
+  } else {
+    // Recursive case where function calls itself
+    // i.e. represents itself with a combination of smaller problems
+    fib(n - 1) + fib(n - 2)
+  }
+
+/*
+fib(4) =
+fib(3) + fib(2) =
+fib(2) + fib(1) + fib(2) =
+fib(1) + fib(0) + fib(2) =
+1 + 0 + fib(2) =
+1 + fib(2) =
+1 + fib(1) + fib(0) =
+1 + 1 + 0 =
+2
+*/
+```
+
+```scala
+import scala.annotation.tailrec
+
+// Regular recursion
+def recSum(list: List[Int]): Int =
+  list match {
+    case Nil =>
+      0
+
+    case head :: tail =>
+      // recursive call is not in tail position
+      head + recSum(tail)
+  }
+
+def tailRecSum(list: List[Int]): Int = {
+  // Method inside method
+  // Annotated with `@tailrec` so compiler will optimize this into a regular loop
+  @tailrec
+  def step(l: List[Int], result: Int): Int =
+    l match {
+      case Nil =>
+        result
+
+      case head :: tail =>
+        // recursive call is in tail position (only thing is the recursive call)
+        step(tail, result + head)
+    }
+
+  // Start stepping with entire list and 0 as sum
+  step(list, 0)
+}
+```
+
+### 3.5. Implicits
+
+```scala
+class Logger {
+  def log(value: Any): Unit = println(value)
+}
+
+val logger = new Logger
+
+def add(a: Int, b: Int, logger: Logger): Int = {
+  logger.log("a = " + a)
+  logger.log("b = " + b)
+  val result = a + b
+  logger.log("result = " + result)
+  result
+}
+
+add(2, 3, logger)
+```
+
+```scala
+class Logger {
+  def log(value: Any): Unit = println(value)
+}
+
+// Marking the value as implicit
+// so any request to an implicit `Logger` can access this
+implicit val logger = new Logger
+
+// Moved `logger` into separate parameter group
+// and marked it as `implicit` so it is searched in current scope.
+//
+// If there is no `Logger` instance marked as implicit in current scope,
+// it won't compile.
+def add(a: Int, b: Int)(implicit logger: Logger): Int = {
+  logger.log("a = " + a)
+  logger.log("b = " + b)
+  val result = a + b
+  logger.log("result = " + result)
+  result
+}
+
+// Not passing logger explicitly, it is being passed implicitly.
+// Since implicit parameter is in a separate parameter group,
+// we can call the method as if it doesn't have a second parameter group.
+add(2, 3)
+
+add(4, 5)(anotherLogger) // can still be provided explicitly
+
+// `implicitly` method captures implicit instance of given type
+implicitly[Logger].log("test")
+```
+
+```scala
+trait Show[A] {
+  def show(a: A): String
+}
+
+// new Show[Int] { override def show(a: Int): String = a.toString }
+// { a: Int => a.toString }
+// { _.toString }
+implicit val intShow: Show[Int] = _.toString
+
+def show1[A](a: A)(implicit s: Show[A]): String = s.show(a)
+
+println(show1(42)) // 42
+
+// Will not compile because there is no implicit `Show[String]` in scope
+println(show1("42"))
+
+// `A: Show` is called a context bound.
+// It means there should be an implicit `Show[A]` in the context (scope) .
+def show2[A: Show](a: A): String = implicitly[Show[A]].show(a)
+```
+
+### 3.6. Laziness
+
+```scala
+// This will not be evaluated until it is referenced.
+lazy val x: String = {
+  println("Initializing x")
+  "hello"
+}
+
+val y: String = "world"
+
+println(y)
+// world
+
+println(x)
+// Initializing x
+// hello
+
+println(x)
+// hello
+```
+
+```scala
+sealed abstract class LogLevel(val id: Int)
+object LogLevel {
+  case object Debug extends LogLevel(1)
+  case object Warn  extends LogLevel(2)
+  case object Error extends LogLevel(3)
+}
+
+class Logger(val level: LogLevel) {
+  // Writing `=> A` instead of `A` makes the parameter lazy.
+  // Unless `value` is referenced, it will not be evaluated.
+  // Think of it like a function taking no parameters
+  // so it doesn't produce the value until it is called.
+  //
+  // In this case, it will only be evaluated if it is actually going to be logged
+  def debug(value: => Any): Unit = if (enabled(LogLevel.Debug)) { println(value) }
+  
+  def warn(value: => Any): Unit = if (enabled(LogLevel.Warn)) { println(value) }
+  
+  def error(value: => Any): Unit = if (enabled(LogLevel.Error)) { println(value) }
+  
+  private def enabled(l: LogLevel): Boolean = l.id >= level.id
+}
+
+val errorLogger = new Logger(LogLevel.Error)
+
+def getValue(): String = {
+  println("Getting value")
+  "test"
+}
+
+// Prints nothing because `errorLogger` won't log at debug level
+// Therefore argument `getValue()` won't be evaluated (because it is marked as lazy)
+errorLogger.debug(getValue())
+
+// Getting value
+// test
+errorLogger.error(getValue())
+```
+
+### 3.7 Future and Concurrency
+
+```scala
+// TODO
+```
+
+### 3.8. Typeclasses
+
+```scala
+// TODO
+```
